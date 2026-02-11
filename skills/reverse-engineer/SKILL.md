@@ -1,11 +1,13 @@
 ---
 name: reverse-engineer
-description: Act as a world-class Reverse Engineer using the full radare2 ecosystem (r2, r2ai, r2frida, r2ghidra). Use this skill to analyze binaries, disassemble code, decompile logic, debug processes, instrument applications, and explain low-level concepts. Triggers on requests involving binary analysis, disassembly, decompilation, malware analysis, CTF challenges, AI-assisted RE, or tools like Radare2, Frida, Ghidra, or r2ai.
+description: Act as a world-class Reverse Engineer using the full radare2 ecosystem (r2, r2ai, r2frida, r2ghidra) and language-specific tooling. Reverse engineer ANY compiled binary — C, C++, Rust, Go, Dart/Flutter AOT, .NET NativeAOT, Swift, Objective-C, Java/Kotlin (Android), or unknown. Use this skill to analyze binaries, disassemble code, decompile logic, debug processes, instrument applications, recover source-level constructs, and explain low-level concepts. Triggers on requests involving binary analysis, disassembly, decompilation, malware analysis, CTF challenges, AI-assisted RE, or tools like Radare2, Frida, Ghidra, Blutter, GoReSym, ILSpy, or r2ai.
 ---
 
 # Expert Reverse Engineering Pipeline
 
-Execute reverse engineering tasks using a rigorous **Triage → Map → Lift → Verify → Instrument** pipeline.
+Reverse engineer **any** compiled binary into readable, reconstructed source. Supports all compiled languages and architectures.
+
+Execute tasks using a rigorous **Triage → Identify Language → Map → Lift → Reconstruct → Verify → Instrument** pipeline.
 
 ## 0. Environment Setup & Tool Stack
 
@@ -22,7 +24,7 @@ e bin.demangle = true        # Auto-demangle C++/Rust symbols
 e scr.color = 3              # Truecolor mode
 ```
 
-### Tool Stack
+### Core Tool Stack
 
 | Tool | Purpose | Install |
 |------|---------|---------|
@@ -37,6 +39,24 @@ e scr.color = 3              # Truecolor mode
 | `decai` | AI-assisted decompilation (r2js) | `r2pm -Uci decai` |
 | `r2frida` | Frida dynamic instrumentation bridge | `r2pm -ci r2frida` |
 | `retdec` | RetDec decompiler plugin | `r2pm -ci retdec` |
+
+### Language-Specific Tools
+
+| Tool | Language | Purpose | Install |
+|------|----------|---------|---------|
+| `rustfilt` | Rust | Demangle Rust symbols | `cargo install rustfilt` |
+| `GoReSym` | Go | Recover symbols/types from Go binaries | `go install github.com/mandiant/GoReSym@latest` |
+| `redress` | Go | Reconstruct Go source structure | `go install github.com/goretk/redress@latest` |
+| `blutter` | Dart/Flutter | Extract Dart AOT snapshot symbols/objects | `git clone https://github.com/worawit/blutter` |
+| `darter` / `doldrums` | Dart/Flutter | Parse specific Dart snapshot versions | GitHub repos |
+| `reFlutter` | Dart/Flutter | Patch and analyze Flutter snapshots | `pip install reflutter` |
+| `ghidra-nativeaot` | .NET NativeAOT | Recover .NET AOT metadata in Ghidra | Ghidra plugin |
+| `ILSpy` | .NET (IL) | Decompile standard .NET assemblies to C# | `dotnet tool install ilspy` |
+| `dnSpy` / `dotPeek` | .NET (IL) | Decompile/debug .NET IL assemblies | Standalone |
+| `swift-demangle` | Swift | Demangle Swift symbols | Bundled with Xcode |
+| `class-dump` | Objective-C | Extract ObjC class info from Mach-O | `brew install class-dump` |
+| `jadx` | Java/Android | Decompile APK/DEX to Java | `brew install jadx` |
+| `apktool` | Android | Decode APK resources and smali | `brew install apktool` |
 
 Verify: `r2 -v && rabin2 -v`
 
@@ -102,9 +122,35 @@ rahash2 -a md5,sha256 <binary>
 1. Architecture? (x86, x86_64, ARM, MIPS, PPC)
 2. Stripped or has symbols?
 3. Static or dynamic linking?
-4. What capabilities do imports reveal? (network? crypto? anti-debug?)
-5. Interesting strings? (hardcoded creds, URLs, error messages)
-6. Packed/obfuscated? (high entropy sections, UPX, custom packers)
+4. **What source language was it compiled from?** (see Language Fingerprinting below)
+5. What capabilities do imports reveal? (network? crypto? anti-debug?)
+6. Interesting strings? (hardcoded creds, URLs, error messages)
+7. Packed/obfuscated? (high entropy sections, UPX, custom packers)
+
+### Language Fingerprinting
+
+Identify the source language **before** deep analysis — it determines your entire toolchain.
+
+| Indicator | Language | How to Detect |
+|-----------|----------|---------------|
+| `_cgo_`, `runtime.`, `go.buildid`, `.gopclntab`, `.gosymtab` | **Go** | `rabin2 -S binary \| grep -i go` or `rabin2 -z binary \| grep -i "go.buildid\|runtime\."` |
+| `_ZN`, `std::`, `__cxa_`, `.rtti`, vtables | **C++** | `rabin2 -z binary \| grep -i "std::\|__cxa"`, `rabin2 -c binary` |
+| `_$LT$`, `core::`, `alloc::`, `_ZN` with `h` suffix | **Rust** | `rabin2 -z binary \| grep -i "core::\|alloc::\|rustc"`, symbols have `h<hash>` suffix |
+| `_kDartVmSnapshot`, `_kDartIsolateSnapshot`, Dart pool | **Dart/Flutter** | `rabin2 -z binary \| grep -i dart\|flutter`, `libapp.so` inside APK |
+| `System.`, `coreclr`, `gc_heap`, `S_P_CoreLib` | **.NET NativeAOT** | `rabin2 -z binary \| grep -i "System\.\|coreclr\|S_P_"` |
+| `.managed_native_aot`, ReadyToRun header | **.NET R2R** | `rabin2 -H binary`, look for R2R magic |
+| Standard .NET PE with `#~`, `#Strings` streams | **.NET IL** | `rabin2 -I binary` shows `class: MSIL`, use ILSpy/dnSpy directly |
+| `objc_msgSend`, `@selector`, `__objc_classlist` | **Objective-C** | `rabin2 -i binary \| grep objc`, `rabin2 -c binary` |
+| `swift_`, `_$s`, `Swift.`, `swiftCore` | **Swift** | `rabin2 -l binary \| grep swift`, `rabin2 -z binary \| grep swift` |
+| `_JAVA_`, `.dex`, `dalvik` | **Java/Android** | `file binary`, look for DEX/JAR/APK format |
+| Clean C-style imports, libc only, no mangling | **C** | Process of elimination — no language-specific markers |
+
+**Quick one-liner:**
+
+```bash
+# Detect source language from string/symbol fingerprints
+rabin2 -zz binary | grep -iE "go\.build|runtime\.(go|newproc)|_ZN.*E$|std::|core::|alloc::|_kDart|flutter|System\.|coreclr|objc_msg|swift_|_\$s" | head -20
+```
 
 ### Advanced Identification
 
@@ -310,21 +356,22 @@ r2 -qc 'aaa; afl~[0]' binary | while read fn; do
 done > full_decompiled.c
 ```
 
-## Phase 4: Reconstruction — From Pseudocode to Real C
+## Phase 4: Reconstruction — From Pseudocode to Source
 
-Decompiler output is pseudocode, not compilable C. Transform it systematically.
+Decompiler output is pseudocode, not compilable source. Transform it to the **original source language** (or C for unknown/C binaries).
 
 ### Reconstruction Checklist
 
-1. **Map imports to headers**: `#include <stdio.h>`, `<stdlib.h>`, `<string.h>`, etc.
-2. **Recover types**: Replace `int64_t param_1` with meaningful types (`char *filename`, `struct foo *ctx`)
-3. **Name variables**: Use context clues (strings, API calls, comparisons) to name locals
-4. **Name functions**: Use call patterns, strings, error messages to name `fcn.0040xxxx`
-5. **Reconstruct structs**: Field access patterns (`*(param_1 + 0x8)`) → struct definitions
-6. **Recover enums/constants**: Magic numbers → named constants (`0x7f454c46` → `ELF_MAGIC`)
-7. **Simplify control flow**: Flatten goto-heavy output into if/else, for, while, switch
-8. **Remove dead code**: Decompiler artifacts, unreachable blocks
-9. **Verify correctness**: Compare behavior of reconstructed C vs original binary
+1. **Identify source language** first (Phase 1 fingerprinting) — reconstruct into the original language
+2. **Map imports to headers/modules**: `#include`, `use`, `import`, `using` as appropriate
+3. **Recover types**: Replace `int64_t param_1` with meaningful types (language-specific: `&str`, `string`, `[]byte`, etc.)
+4. **Name variables**: Use context clues (strings, API calls, comparisons) to name locals
+5. **Name functions**: Use call patterns, strings, error messages to name `fcn.0040xxxx`
+6. **Reconstruct structs/classes**: Field access patterns (`*(param_1 + 0x8)`) → struct/class definitions
+7. **Recover enums/constants**: Magic numbers → named constants
+8. **Simplify control flow**: Flatten goto-heavy output into idiomatic control flow
+9. **Apply language idioms**: `Result<T,E>` for Rust, error returns for Go, async/await for Dart, etc.
+10. **Verify correctness**: Compare behavior of reconstructed source vs original binary
 
 ### Struct Recovery Pattern
 
@@ -378,7 +425,255 @@ avr                   # Recover RTTI at address
 # } MyClass_vtable;
 ```
 
-## Phase 5: Dynamic Analysis & Instrumentation
+## Phase 5: Language-Specific Reverse Engineering
+
+After identifying the source language in Phase 1, apply these specialized workflows.
+
+### C++ Binaries
+
+C++ binaries contain vtables, RTTI, name-mangled symbols, exception handling, and templates.
+
+```
+# Ensure demangling is on
+e bin.demangle = true
+
+# Analyze vtables and class hierarchy
+av                    # Discover all vtables
+avj                   # Vtables as JSON
+avr                   # Recover RTTI at address
+
+# Demangle a symbol manually
+iD cxx <mangled_name>
+
+# List C++ classes
+rabin2 -c <binary>
+
+# Reconstruct vtable as C struct:
+# typedef struct {
+#     void (*dtor)(void *this);
+#     void (*method1)(void *this, int arg);
+#     void (*method2)(void *this, const char *str);
+# } MyClass_vtable;
+#
+# typedef struct {
+#     MyClass_vtable *vptr;  // first field is always vtable pointer
+#     int field1;
+#     char *field2;
+# } MyClass;
+```
+
+**Key C++ patterns to recognize:**
+- `this` pointer is always the first argument (RDI on x86_64, R0 on ARM)
+- Virtual calls: `call [rax + offset]` where RAX points to vtable
+- `__cxa_throw` / `__cxa_begin_catch` = exception handling
+- `operator new` / `operator delete` = heap allocation
+- Template instantiations create many nearly-identical functions
+
+### Rust Binaries
+
+Rust binaries are statically linked, heavily inlined, and use a unique mangling scheme.
+
+```bash
+# Demangle Rust symbols
+rabin2 -z binary | rustfilt          # Pipe through rustfilt
+echo "_ZN4core3fmt5write17h..." | rustfilt   # Single symbol
+```
+
+```
+# Inside r2 — demangling is automatic with e bin.demangle = true
+e bin.demangle = true
+
+# Rust-specific: look for panic/unwinding infrastructure
+axt @ sym.imp.rust_begin_unwind
+axt @ sym.imp._ZN4core9panicking5panic
+
+# String recovery: Rust strings are (ptr, len) pairs, NOT null-terminated
+# Look for: lea rdi, [str_ptr]; mov rsi, <length>
+
+# Result/Option pattern: match on tag byte
+# if (tag == 0) { /* None/Err */ } else { /* Some(val)/Ok(val) */ }
+```
+
+**Key Rust patterns to recognize:**
+- `Result<T, E>` and `Option<T>` compile to tagged unions (discriminant + payload)
+- Strings are `&str` = `(pointer, length)` — not null-terminated
+- Closures become anonymous structs with captured variables as fields
+- `Vec<T>` = `(pointer, length, capacity)` — three fields
+- `Box<T>` = a heap pointer, `Drop` trait = destructor call
+- Panics compile to calls to `core::panicking::panic` with file/line info
+- Iterators and `.map()/.filter()` chains often inline completely
+
+### Go Binaries
+
+Go binaries are large, statically linked, and have unique calling conventions and runtime structures.
+
+```bash
+# Step 1: Recover symbols with GoReSym (even from stripped binaries)
+GoReSym -d -p -t binary > symbols.json
+
+# Step 2: Recover source structure with redress
+redress -src binary              # Reconstruct source file/package tree
+redress -type binary             # Dump all Go types
+redress -interface binary        # Dump interface definitions
+```
+
+```
+# Inside r2
+# Go's PCLNTAB section contains function metadata
+rabin2 -S binary | grep pclntab
+
+# Go-specific sections
+# .gopclntab  — function name table (goldmine)
+# .gosymtab   — symbol table
+# .go.buildid — build identifier
+# .noptrdata  — non-pointer global data
+
+# Go strings are (pointer, length) pairs like Rust
+# Go calling convention: args/returns on stack (pre-1.17) or registers (1.17+)
+# Goroutine creation: look for calls to runtime.newproc / runtime.newproc1
+# Defer: runtime.deferproc / runtime.deferreturn
+# Interface calls: runtime.assertI2I, runtime.convT2I
+```
+
+**Key Go patterns to recognize:**
+- Functions return multiple values (return value + error)
+- `runtime.morestack` at function entry = goroutine stack growth check
+- `runtime.gopanic` / `runtime.gorecover` = panic/recover
+- Channels: `runtime.makechan`, `runtime.chansend`, `runtime.chanrecv`
+- Slices are `(pointer, length, capacity)` like Rust Vec
+- Maps: `runtime.makemap`, `runtime.mapaccess1`, `runtime.mapassign`
+- Interfaces are `(type_pointer, data_pointer)` — two words
+
+### Dart/Flutter AOT Binaries
+
+Flutter compiles Dart to native code via AOT snapshots (`libapp.so`). Custom binary format with no standard symbol tables.
+
+```bash
+# Step 1: Extract native libs from APK
+apktool d app.apk -o extracted/
+# Target: extracted/lib/arm64-v8a/libapp.so (and libflutter.so)
+
+# Step 2: Recover symbols with blutter (primary tool)
+python3 blutter.py extracted/lib/arm64-v8a/ output_dir/
+# Output:
+#   asm/       — Annotated assembly with Dart class/method names
+#   objs.txt   — Object pool dump (strings, constants, closures)
+#   pp.txt     — Object pool pointers
+#   ida_script/ or r2_script/ — Import scripts for disassemblers
+#   frida/     — Generated Frida hooks
+
+# Step 3: Load symbols into r2
+r2 extracted/lib/arm64-v8a/libapp.so
+. output_dir/r2_script/r2.r2    # Load blutter symbols (if generated)
+
+# Alternative: doldrums (version-specific snapshot parser)
+# python3 doldrums.py <app_snapshot> <output>
+```
+
+**Key Dart/Flutter patterns to recognize:**
+- Object pool: Dart stores constants, strings, and closures in a pool accessed via a dedicated register
+- ARM64: Thread pointer in X26 (THR), object pool pointer in X27 (PP)
+- No standard calling convention — Dart uses its own ABI
+- Type guards: frequent `cid` (class ID) checks before method dispatch
+- Null safety: `Null` checks compile to tag comparisons
+- `libflutter.so` is the engine; `libapp.so` is your app code
+
+### .NET NativeAOT Binaries
+
+.NET NativeAOT strips IL and most metadata. Classical .NET tools (ILSpy, dnSpy) do NOT work.
+
+```bash
+# Step 1: Confirm it's NativeAOT (no IL metadata)
+rabin2 -I binary    # Will show as native PE/ELF, NOT MSIL
+rabin2 -z binary | grep -i "System\.\|S_P_CoreLib\|coreclr"
+
+# Step 2: Use Ghidra with ghidra-nativeaot plugin
+# Install: Copy ghidra-nativeaot to Ghidra Extensions folder
+# The plugin recovers:
+#   - MethodTable structures
+#   - Type/class hierarchy fragments
+#   - String literals
+#   - Static field references
+
+# Step 3: In r2 — treat as native binary with .NET pattern recognition
+r2 -A binary
+
+# .NET NativeAOT leaves breadcrumbs:
+# - String literals in UTF-16LE with length prefix
+# - MethodTable pointers at object+0x00
+# - GC references follow specific patterns
+# - S_P_CoreLib_ prefixed symbols = System.Private.CoreLib
+
+# Search for .NET string patterns (length-prefixed UTF-16)
+/x 00000000........0000    # Look for .NET string objects
+```
+
+**For standard .NET IL assemblies** (NOT NativeAOT), skip r2 entirely:
+
+```bash
+# ILSpy — full C# source recovery
+ilspy binary.dll -o output/          # CLI decompile to C#
+# Or use dotPeek / dnSpy GUI for interactive browsing
+```
+
+### Swift Binaries
+
+Swift uses its own mangling scheme and metadata format.
+
+```bash
+# Demangle Swift symbols
+swift-demangle < symbols.txt
+echo '$s4MyApp10ViewModelC' | swift-demangle
+
+# Inside r2
+e bin.demangle = true    # r2 handles Swift demangling
+
+# Swift-specific:
+# - Protocol witness tables: functions with `witness` in demangled name
+# - Value witnesses: copy, destroy, initializeBufferWithCopy operations
+# - Type metadata: `$s...MN` (nominal type descriptor), `$s...Ma` (metadata accessor)
+# - String interpolation: calls to _StringInterpolation methods
+```
+
+### Objective-C Binaries
+
+Rich runtime metadata makes ObjC one of the easiest to reverse engineer.
+
+```bash
+# Extract class hierarchy (Mach-O only)
+class-dump binary > classes.h
+
+# Inside r2
+rabin2 -c binary          # List all ObjC classes with methods
+ic                        # List classes inside r2
+icj                       # Classes as JSON
+icc ClassName             # Show specific class methods
+```
+
+**Key ObjC patterns:**
+- All method calls go through `objc_msgSend(receiver, selector, ...args)`
+- Selectors are visible strings: `axt @ str.viewDidLoad:` finds all calls
+- Categories add methods to existing classes at runtime
+
+### Java/Android (APK/DEX)
+
+For Dalvik/ART binaries, use dedicated tools before r2.
+
+```bash
+# Full APK → Java source
+jadx app.apk -d output/
+
+# Decode resources + smali
+apktool d app.apk -o smali_output/
+
+# For native JNI libraries inside APK:
+# Extract lib/arm64-v8a/*.so and analyze with r2 as ELF
+r2 -A lib/arm64-v8a/libnative.so
+```
+
+For native (JNI) code, combine r2 analysis with `jadx` output to understand the Java↔native boundary. Look for `JNI_OnLoad`, `Java_<package>_<class>_<method>` naming.
+
+## Phase 6: Dynamic Analysis & Instrumentation
 
 ### Debugging (Native)
 
@@ -471,7 +766,7 @@ radiff2 -c binary_v1 binary_v2        # Code diffing
 radiff2 -g main binary_v1 binary_v2   # Graph diff of main function
 ```
 
-## Phase 6: Automation (r2pipe)
+## Phase 7: Automation (r2pipe)
 
 Script repetitive tasks for batch analysis.
 
@@ -497,6 +792,7 @@ r2.quit()
 
 | Intent | Command |
 |--------|---------|
+| Detect source language | `rabin2 -zz binary \| grep -iE "go\.build\|runtime\.\|_ZN\|core::\|_kDart\|System\.\|objc_msg\|swift_"` |
 | Explain function with AI | `r2ai -d "Explain current function"` |
 | AI-decompile with callees | `decai -dr` |
 | Auto-solve crackme (AI) | `decai -a "solve this crackme"` |
@@ -506,11 +802,20 @@ r2.quit()
 | Extract all strings | `rabin2 -zz binary` |
 | Full binary triage | `rabin2 -I binary && rabin2 -z binary && rabin2 -i binary` |
 | Diff two binaries | `radiff2 -c old.bin new.bin` |
+| Demangle Rust symbols | `rabin2 -z binary \| rustfilt` |
+| Recover Go symbols | `GoReSym -d -p -t binary > symbols.json` |
+| Reconstruct Go types | `redress -type binary` |
+| Flutter/Dart AOT symbols | `python3 blutter.py lib/arm64-v8a/ out/` |
+| Decompile APK to Java | `jadx app.apk -d output/` |
+| .NET IL → C# source | `ilspy binary.dll -o output/` |
+| ObjC class dump | `class-dump binary > classes.h` |
+| Demangle Swift symbols | `swift-demangle < symbols.txt` |
+| Analyze C++ vtables | `av && avr` |
 | Trace Java methods (Android) | `r2 frida://<pid>` then `\dt android.app.Activity` |
 | Patch instruction to NOP | `wao nop` |
 | Search for ROP gadgets | `/R` |
 | Heap chunk analysis | `dmh` |
-| List biggest functions | `afl~[2] | sort -rn | head` |
+| List biggest functions | `afl~[2] \| sort -rn \| head` |
 
 ## r2 Self-Documentation
 

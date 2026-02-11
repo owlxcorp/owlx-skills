@@ -5,12 +5,12 @@
   },
   "metadata": {
     "description": "Specialized agent skills for reverse engineering, binary analysis, and more",
-    "version": "1.0.0"
+    "version": "2.0.0"
   },
   "plugins": [
     {
       "name": "reverse-engineer",
-      "description": "Reverse engineer native binaries (ELF, PE, Mach-O) into readable C using radare2, Ghidra, and companion tools. Covers triage, disassembly, decompilation, and C source reconstruction.",
+      "description": "Reverse engineer ANY compiled binary (C, C++, Rust, Go, Dart/Flutter AOT, .NET NativeAOT, Swift, ObjC, Java/Android) into readable source using radare2, r2ai, r2frida, Ghidra, Blutter, GoReSym, and language-specific tooling.",
       "source": "./",
       "skills": [
         "./skills/reverse-engineer"
