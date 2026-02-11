@@ -1,13 +1,28 @@
 ---
 name: reverse-engineer
-description: Reverse engineer native binaries (ELF, PE, Mach-O) into readable C source code using radare2, Ghidra, and companion tools. Use when the user asks to disassemble, decompile, analyze, or reverse engineer a binary, executable, shared library, firmware image, or object file. Also use when asked to find vulnerabilities in binaries, solve crackmes/CTFs, extract strings or symbols, understand unknown executables, reconstruct C source from machine code, or perform binary diffing. Triggers on mentions of radare2, r2, Ghidra, disassembly, decompilation, binary analysis, reverse engineering, RE, or malware analysis.
+description: Act as a world-class Reverse Engineer using the full radare2 ecosystem (r2, r2ai, r2frida, r2ghidra). Use this skill to analyze binaries, disassemble code, decompile logic, debug processes, instrument applications, and explain low-level concepts. Triggers on requests involving binary analysis, disassembly, decompilation, malware analysis, CTF challenges, AI-assisted RE, or tools like Radare2, Frida, Ghidra, or r2ai.
 ---
 
-# Binary Reverse Engineering to C
+# Expert Reverse Engineering Pipeline
 
-Reverse engineer native binaries into readable C using a structured pipeline: **triage → disassembly → decompilation → reconstruction**.
+Execute reverse engineering tasks using a rigorous **Triage → Map → Lift → Verify → Instrument** pipeline.
 
-## Tool Stack
+## 0. Environment Setup & Tool Stack
+
+Configure for maximum visibility before analysis.
+
+### Recommended ~/.radare2rc
+
+```
+e scr.utf8 = true           # UTF-8 boxes/arrows
+e asm.emu = true            # Show emulated register values in comments
+e asm.var = true             # Show local variables in disassembly
+e anal.hasnext = true        # Aggressive function detection
+e bin.demangle = true        # Auto-demangle C++/Rust symbols
+e scr.color = 3              # Truecolor mode
+```
+
+### Tool Stack
 
 | Tool | Purpose | Install |
 |------|---------|---------|
@@ -18,107 +33,135 @@ Reverse engineer native binaries into readable C using a structured pipeline: **
 | `rahash2` | Hashing and checksums | Bundled with r2 |
 | `r2ghidra` | Ghidra decompiler as r2 plugin | `r2pm -ci r2ghidra` |
 | `r2dec` | Lightweight r2 decompiler | `r2pm -ci r2dec` |
-| `decai` | AI-assisted decompilation | `r2pm -ci decai` |
+| `r2ai` | AI integration (native C plugin) | `r2pm -Uci r2ai` |
+| `decai` | AI-assisted decompilation (r2js) | `r2pm -Uci decai` |
+| `r2frida` | Frida dynamic instrumentation bridge | `r2pm -ci r2frida` |
 | `retdec` | RetDec decompiler plugin | `r2pm -ci retdec` |
 
-Verify installation:
+Verify: `r2 -v && rabin2 -v`
+
+### r2ai API Key Setup
+
+For remote LLM APIs, store keys in home directory:
 
 ```bash
-r2 -v && rabin2 -v
-r2 -qc 'e asm.arch' --    # check default arch
+echo "sk-..." > ~/.r2ai.openai-key && chmod 600 ~/.r2ai.openai-key
+echo "sk-ant-..." > ~/.r2ai.anthropic-key && chmod 600 ~/.r2ai.anthropic-key
 ```
 
-## Phase 1: Triage — Identify the Target
+Configure model in `~/.radare2rc`:
 
-Before disassembly, extract all metadata to understand what you're working with.
+```
+r2ai -e api=anthropic
+r2ai -e model=claude-sonnet-4-20250514
+r2ai -e max_tokens=64000
+```
+
+## Phase 1: Deep Triage & Capability Mapping
+
+Don't just run `rabin2 -I`. Map the binary's full capability surface.
 
 ```bash
-# File type, arch, bits, endianness, OS, compiler, security features
+# Identity: format, arch, bits, endianness, OS, compiler, security (NX/PIE/Canary)
 rabin2 -I <binary>
 
-# Entry point(s)
-rabin2 -e <binary>
-
-# Sections (code vs data, permissions, sizes)
-rabin2 -S <binary>
-
-# Imports (external API calls — reveals behavior)
+# Behavior profiling via imports
+#   Network: socket, connect, bind, send, recv
+#   File I/O: fopen, read, write, access, unlink
+#   Process: fork, exec, system, popen
+#   Crypto: EVP_*, AES_*, SHA_*
+#   Anti-debug: ptrace, IsDebuggerPresent, sigaction
 rabin2 -i <binary>
 
-# Exports (public symbols)
-rabin2 -E <binary>
+# Strings (secrets, URLs, error messages, format strings)
+rabin2 -z <binary>          # data section only
+rabin2 -zz <binary>         # all strings (catches obfuscated/encoded)
 
-# Linked libraries
-rabin2 -l <binary>
+# Structure: sections, entry points, exports, libraries, relocations
+rabin2 -S <binary>          # sections
+rabin2 -e <binary>          # entry points
+rabin2 -E <binary>          # exports
+rabin2 -l <binary>          # linked libraries
+rabin2 -R <binary>          # relocations
+rabin2 -H <binary>          # headers
 
-# Strings in data sections (passwords, URLs, keys, format strings, error messages)
-rabin2 -z <binary>
-
-# ALL strings including raw binary (catches obfuscated/encrypted strings)
-rabin2 -zz <binary>
-
-# Headers
-rabin2 -H <binary>
-
-# Relocations
-rabin2 -R <binary>
-
-# Classes (C++/ObjC/Java/Dalvik)
+# C++/ObjC/Java: classes and RTTI
 rabin2 -c <binary>
 
-# Debug/DWARF info (if present — massively simplifies RE)
+# Debug/DWARF info (massively simplifies RE if present)
 rabin2 -d <binary>
 
-# Everything at once (verbose)
+# Everything at once
 rabin2 -g <binary>
 
-# Hash the binary for identification
+# Hash for identification
 rahash2 -a md5,sha256 <binary>
 ```
 
-**Key triage questions to answer:**
-1. Architecture? (x86, x86_64, ARM, MIPS, PPC, etc.)
+**Key triage questions:**
+1. Architecture? (x86, x86_64, ARM, MIPS, PPC)
 2. Stripped or has symbols?
-3. Statically or dynamically linked?
-4. What does it import? (network? file? crypto? process?)
+3. Static or dynamic linking?
+4. What capabilities do imports reveal? (network? crypto? anti-debug?)
 5. Interesting strings? (hardcoded creds, URLs, error messages)
-6. Any anti-debug? (`ptrace`, `IsDebuggerPresent`)
-7. Packed/obfuscated? (high entropy sections, UPX, custom packers)
+6. Packed/obfuscated? (high entropy sections, UPX, custom packers)
 
-## Phase 2: Disassembly — Understand the Machine Code
+### Advanced Identification
+
+**Stripped binary** → Apply Zignatures (FLIRT-style) to identify static library functions:
+
+```
+r2 -A <binary>
+z*                    # Manage/apply signatures
+zfs <sig_file>        # Load signature file
+```
+
+**C++ target** → Inspect virtual tables and RTTI for class hierarchy:
+
+```
+av                    # Analyze vtables
+avr                   # Recover RTTI at address
+avj                   # Vtables as JSON
+```
+
+## Phase 2: Static Analysis & Disassembly
 
 ### Open and Analyze
 
 ```bash
-# Open binary in r2 (read-only by default)
-r2 <binary>
-
-# Open with write mode (for patching)
-r2 -w <binary>
-
-# Open and auto-analyze
-r2 -A <binary>        # equivalent to r2 then `aa`
-r2 -AA <binary>       # deeper analysis (aaa)
+r2 <binary>           # Read-only (default)
+r2 -w <binary>        # Write mode (for patching)
+r2 -A <binary>        # Auto-analyze (aa)
+r2 -AA <binary>       # Deep analysis (aaa)
 ```
 
-### Analysis Commands (inside r2 shell)
+### Analysis Commands — Understand the Depth
 
-Run analysis before doing anything else:
+Do not blindly run `aaa`. Choose the right depth:
 
 ```
-aa          # Analyze all symbols and entry points (fast, minimum)
-aaa         # Analyze all — includes aa + type propagation + more (recommended)
-aab         # Basic block analysis (Nucleus algorithm — good for stripped bins)
-aac         # Analyze function calls
+aa          # Basic: symbols + entry points (fast)
+aaa         # Standard: aa + type propagation + more (recommended)
+aab         # Nucleus algorithm — vital for stripped binaries
+aac         # Analyze function call destinations
 aaf         # Analyze all function calls
-aar         # Analyze data references
+aar         # Analyze data references (lenient)
 aad         # Analyze pointer-to-pointer references
-aaaa        # Experimental deep analysis (slow but thorough)
+aaaa        # Experimental deep analysis (slow, thorough)
+```
+
+### Function Management
+
+```
 afl         # List all discovered functions
 aflj        # List functions as JSON
-afl=        # ASCII-art bar chart of function ranges
+afl=        # ASCII-art function range bars
 afn <name> [addr]  # Rename function
 afvn <old> <new>   # Rename local variable
+afvt <name> <type> # Retype variable (e.g., afvt local_8h char *)
+afi         # Function info (size, complexity, xrefs)
+afb         # List basic blocks
+afCc        # Cyclomatic complexity
 ```
 
 ### Navigate and Disassemble
@@ -128,38 +171,34 @@ s main            # Seek to main (or sym.main)
 s <addr>          # Seek to address
 s- / s+           # Undo/redo seek
 
-pdf               # Print disassembly of current function
-pdf @ main        # Print disassembly of main
-pd 20             # Print 20 instructions from current position
+pdf               # Disassemble current function
+pdf @ main        # Disassemble main
+pd 20             # Print 20 instructions at current position
 pd 20 @ 0x401000  # Print 20 instructions at address
-pdr               # Print disassembly of function recursively (follow calls)
-pds               # Print function summary (calls + strings only)
-pdsf              # Summary of current function
-pdc               # Pseudo-decompiler (all architectures)
+pdr               # Disassemble function recursively (follow calls)
+pds               # Function summary (calls + strings only)
+pdc               # Pseudo-decompiler (all architectures, no plugins)
 
-# Cross-references (critical for understanding control flow)
-axt [addr]        # Find xrefs TO this address (who calls/references this?)
-axf [addr]        # Find xrefs FROM this address (what does this call/reference?)
+# Cross-references — critical for control flow
+axt [addr]        # Xrefs TO this address (who calls/references this?)
+axf [addr]        # Xrefs FROM this address (what does this call/reference?)
 axtg              # Generate xref graph commands
 axg [addr]        # Show xref graph to reach an address
-
-# Information about current function
-afi               # Function info (size, complexity, calls, xrefs)
-afb               # List basic blocks of current function
-afCc              # Cyclomatic complexity
 ```
 
-### Visual Mode
+### Visual Modes
 
 ```
-V                 # Enter visual mode
-VV                # Enter graph mode (control flow graph)
-p / P             # Rotate view modes (hex, disasm, debug)
+V                 # Visual mode (hex, disasm, debug views)
+VV                # Graph mode (control flow graph) — critical for complex logic
+V!                # Visual Panels (IDA-like multi-panel layout)
+p / P             # Rotate view modes
 v                 # Code analysis menu (function browser)
 :                 # Enter r2 command from visual mode
 q                 # Exit visual mode
 hjkl              # Navigate (vim-style)
 x                 # Show xrefs
+Tab               # Switch panels (in V!)
 ```
 
 ### Searching
@@ -168,8 +207,8 @@ x                 # Show xrefs
 / <string>        # Search for string
 /x <hex>          # Search for hex bytes
 /c <asm>          # Search for assembly instruction pattern
+/a <asm>          # Assemble and search for bytes
 /R                # Search for ROP gadgets
-/a <asm>          # Assemble instruction and search for its bytes
 iz                # List strings in data section
 izz               # List ALL strings in binary
 ```
@@ -185,40 +224,37 @@ ir                # Relocations
 iz                # Strings (data section)
 ```
 
-## Phase 3: Decompilation — Lift to C
+## Phase 3: AI-Augmented Decompilation
 
-Use decompiler plugins to convert disassembly to C pseudocode.
+Modern RE uses LLMs to accelerate understanding. Use the full decompiler stack.
 
 ### Built-in Pseudo-Decompiler (pdc)
 
-Available for ALL architectures with no plugins needed:
+Available for ALL architectures, no plugins needed. Fast and verbose — good starting point and good LLM feed:
 
 ```
 pdc               # Pseudo-decompile current function
 pdc @ main        # Pseudo-decompile main
 ```
 
-Output is verbose but useful as a starting point and fast.
-
-### r2ghidra (pdg) — Recommended
+### r2ghidra (pdg) — Recommended for Quality
 
 Install: `r2pm -ci r2ghidra`
 
 ```
 pdg               # Decompile current function to C
 pdg @ main        # Decompile main
-pdgo              # Decompile with offset annotations (map C lines → addresses)
+pdgo              # Decompile with offset annotations (C lines → addresses)
 pdga              # Side-by-side: disassembly | decompilation
-pdgj              # Decompile as JSON (for scripting/automation)
-pdgsd             # Decompile and show debug info
+pdgj              # JSON output (for scripting)
 ```
 
-Configure r2ghidra:
+Configure:
 
 ```
 e r2ghidra.casts=true       # Show type casts
 e r2ghidra.lang=x86:LE:64:default  # Override arch detection
-e r2ghidra.roprop=2         # Read-only constant propagation level (0-4)
+e r2ghidra.roprop=2         # Read-only constant propagation (0-4)
 e r2ghidra.vars=true        # Use r2's variable analysis
 e r2ghidra.timeout=120      # Decompilation timeout (seconds)
 ```
@@ -233,21 +269,42 @@ pdda              # Side-by-side: disassembly | decompilation
 pddj              # JSON output
 ```
 
-Configure r2dec:
+### r2ai — AI-Powered Analysis
+
+Install: `r2pm -Uci r2ai`
 
 ```
-e r2dec.casts=true          # Show type casts
-e r2dec.asm=true            # Show pseudo next to assembly
-e r2dec.xrefs=true          # Show xrefs in output
+r2ai -d "Explain what the current function does"
+r2ai -d "List possible vulnerabilities in this function"
+r2ai -d "Suggest better variable names for this function"
+```
+
+### decai — AI Decompilation Engine
+
+Install: `r2pm -Uci decai`
+
+```
+decai -d              # AI-decompile current function
+decai -dr             # Recursive: decompile function + all callees
+decai -dd             # Force re-decompile (ignore cache)
+decai -dD "with descriptive variable names"  # Decompile with extra query
+decai -q "Explain what forkpty does in 2 lines"  # Quick question
+decai -a "Find buffer overflows and propose a patch"  # Auto mode
+decai -a "solve this crackme"  # Auto-solve
+```
+
+Configure decai:
+
+```
+decai -e api=anthropic        # or openai, ollama, mistral, gemini
+decai -e model=claude-sonnet-4-20250514
+decai -e lang=C               # Output language
+decai -e cache=true            # Cache decompilation results
 ```
 
 ### Decompile All Functions (scripting)
 
 ```bash
-# Decompile every function to a file
-r2 -q -c 'aaa; afl~[0] | while read addr; do echo "// --- $addr ---"; pdg @ $addr; done' binary > decompiled.c
-
-# Or via r2pipe one-liner
 r2 -qc 'aaa; afl~[0]' binary | while read fn; do
   r2 -qc "aaa; s $fn; pdg" binary
 done > full_decompiled.c
@@ -255,7 +312,7 @@ done > full_decompiled.c
 
 ## Phase 4: Reconstruction — From Pseudocode to Real C
 
-The decompiler output is pseudocode, not compilable C. Transform it:
+Decompiler output is pseudocode, not compilable C. Transform it systematically.
 
 ### Reconstruction Checklist
 
@@ -265,7 +322,7 @@ The decompiler output is pseudocode, not compilable C. Transform it:
 4. **Name functions**: Use call patterns, strings, error messages to name `fcn.0040xxxx`
 5. **Reconstruct structs**: Field access patterns (`*(param_1 + 0x8)`) → struct definitions
 6. **Recover enums/constants**: Magic numbers → named constants (`0x7f454c46` → `ELF_MAGIC`)
-7. **Simplify control flow**: Flatten goto-heavy decompiler output into if/else, for, while, switch
+7. **Simplify control flow**: Flatten goto-heavy output into if/else, for, while, switch
 8. **Remove dead code**: Decompiler artifacts, unreachable blocks
 9. **Verify correctness**: Compare behavior of reconstructed C vs original binary
 
@@ -287,31 +344,48 @@ typedef struct {
 } my_struct_t;
 ```
 
-Use r2 type commands to define and apply structs:
+### Manual Type Application in r2
 
 ```
-# Define types in r2
-tk my_struct=struct
-ts my_struct 0 field_0 uint64_t
-ts my_struct 8 field_8 uint64_t
+# Rename and retype variables
+afvn local_4h filename
+afvt local_4h char *
 
-# Or load from a C header
+# Define struct from C syntax
+"td struct user { int id; char name[64]; int role; };"
+
+# Apply struct type to variable
+afvt local_8h struct user *
+
+# Load types from a C header
 to header.h
 
-# Apply type to a function argument
+# Apply type to function signature
 afsr <function> <new_signature>
 ```
 
-## Phase 5: Advanced Techniques
+### C++ Vtable Reconstruction
 
-### Debugging (Dynamic Analysis)
+```
+av                    # Analyze all vtables
+avj                   # Vtables as JSON
+avr                   # Recover RTTI at address
+
+# Reconstructed vtable → C struct:
+# typedef struct {
+#     void (*method1)(void *this);
+#     void (*method2)(void *this, int arg);
+# } MyClass_vtable;
+```
+
+## Phase 5: Dynamic Analysis & Instrumentation
+
+### Debugging (Native)
 
 ```bash
 r2 -d <binary>           # Open in debugger mode
 r2 -d -A <binary>        # Debug + auto-analyze
 ```
-
-Inside debugger:
 
 ```
 db <addr>         # Set breakpoint
@@ -326,17 +400,53 @@ px 64 @ rsp       # Hex dump 64 bytes at stack pointer
 dbt               # Show backtrace
 ```
 
-### Emulation (ESIL)
+### r2frida — Dynamic Instrumentation Bridge
 
-Run code without executing natively — safe for malware:
+Inject Frida scripts directly from r2. Superior for mobile, obfuscated, or packed targets.
+
+```bash
+r2 frida://<pid>          # Attach to running process by PID
+r2 frida://0              # Spawn local process
+r2 frida://usb//<app>     # Attach to mobile app over USB
+```
+
+Inside r2frida session:
+
+```
+\i                        # List imports/exports via Frida
+\il                       # List loaded libraries
+\dt <symbol>              # Trace function calls (e.g., \dt recv)
+\dt java.lang.String      # Trace Java methods (Android)
+\di0 <addr>               # Intercept function at addr, log args
+\. script.js              # Inject and run custom Frida JS script
+:.                        # Run r2 commands inside the target process
+\dc                       # Continue after intercepting
+```
+
+### Heap Analysis (Exploit Development)
+
+Analyze glibc heap layout for use-after-free, double-free, heap overflow:
+
+```
+dmh                       # List heap chunks
+dmhg                      # Graph heap layout (visual)
+dmhc @ <addr>             # Inspect malloc_chunk struct at address
+dmhb                      # List heap bins (fast, unsorted, small, large)
+dmht                      # Show tcache entries
+```
+
+### ESIL Emulation (Safe Mode for Malware)
+
+Run code without native execution — safe for malware analysis:
 
 ```
 aei               # Initialize ESIL VM
 aeim              # Initialize ESIL memory/stack
-aeip              # Set instruction pointer to entry
+aeip              # Set instruction pointer to entry/current
 aes               # Step one instruction
 aeso              # Step over
 aer               # Show ESIL registers
+aecu <addr>       # Continue until address
 ```
 
 ### Binary Patching
@@ -346,10 +456,11 @@ r2 -w <binary>           # Open in write mode
 ```
 
 ```
-wa nop @ 0x401234        # Write NOP at address
-"wa jmp 0x40abcd" @ addr # Write jump instruction
-wx 9090 @ 0x401234       # Write raw hex bytes
-wao nop @ addr           # Write NOP opcode over current instruction
+wa nop @ 0x401234         # Write NOP at address
+"wa jmp 0x40abcd" @ addr  # Write jump instruction
+wx 9090 @ 0x401234        # Write raw hex bytes
+wao nop @ addr            # NOP current instruction
+wao jz @ addr             # Change conditional jump type
 ```
 
 ### Binary Diffing
@@ -360,7 +471,9 @@ radiff2 -c binary_v1 binary_v2        # Code diffing
 radiff2 -g main binary_v1 binary_v2   # Graph diff of main function
 ```
 
-### Scripting with r2pipe
+## Phase 6: Automation (r2pipe)
+
+Script repetitive tasks for batch analysis.
 
 ```python
 import r2pipe
@@ -370,89 +483,54 @@ r2.cmd("aaa")
 
 # List all functions
 functions = r2.cmdj("aflj")
-for fn in functions:
-    print(f"{fn['name']} at {fn['offset']:#x}, size={fn['size']}")
+for f in functions:
+    print(f"{f['name']} at {f['offset']:#x}, size={f['size']}")
 
 # Decompile a function
 r2.cmd("s main")
-c_code = r2.cmd("pdg")
-print(c_code)
+print(r2.cmd("pdg"))
 
 r2.quit()
 ```
 
-## Quick Reference — Common Workflows
+## Quick Reference — One-Liners
 
-### "What does this binary do?"
-
-```bash
-rabin2 -I binary && rabin2 -z binary && rabin2 -i binary
-r2 -qc 'aaa; afl; pds @ main' binary
-```
-
-### "Decompile main to C"
-
-```bash
-r2 -qc 'aaa; s main; pdg' binary
-```
-
-### "Find all calls to a dangerous function"
-
-```bash
-r2 -qc 'aaa; axt @ sym.imp.strcpy' binary
-r2 -qc 'aaa; axt @ sym.imp.gets' binary
-r2 -qc 'aaa; axt @ sym.imp.system' binary
-```
-
-### "Extract and list all hardcoded strings"
-
-```bash
-rabin2 -z binary           # data section strings
-rabin2 -zz binary          # all strings including raw
-r2 -qc 'aaa; izz' binary  # from inside r2
-```
-
-### "Solve a crackme"
-
-```bash
-r2 -A binary
-# 1. Find main: afl~main
-# 2. Disassemble: pdf @ main
-# 3. Find comparison: look for cmp/test before conditional jumps
-# 4. Trace the compared value back through the code
-# 5. Patch the jump: wa jmp <success_addr> @ <cmp_addr>
-# Or: extract the comparison constant from the disassembly
-```
-
-### "Diff two binary versions"
-
-```bash
-radiff2 -c old_binary new_binary
-r2 -qc 'aaa; afl' old_binary > old_fns.txt
-r2 -qc 'aaa; afl' new_binary > new_fns.txt
-diff old_fns.txt new_fns.txt
-```
+| Intent | Command |
+|--------|---------|
+| Explain function with AI | `r2ai -d "Explain current function"` |
+| AI-decompile with callees | `decai -dr` |
+| Auto-solve crackme (AI) | `decai -a "solve this crackme"` |
+| Find dangerous calls | `aaa; axt @ sym.imp.system` |
+| Find buffer overflows (AI) | `decai -a "Find buffer overflows and propose a patch"` |
+| Decompile main to C | `r2 -qc 'aaa; s main; pdg' binary` |
+| Extract all strings | `rabin2 -zz binary` |
+| Full binary triage | `rabin2 -I binary && rabin2 -z binary && rabin2 -i binary` |
+| Diff two binaries | `radiff2 -c old.bin new.bin` |
+| Trace Java methods (Android) | `r2 frida://<pid>` then `\dt android.app.Activity` |
+| Patch instruction to NOP | `wao nop` |
+| Search for ROP gadgets | `/R` |
+| Heap chunk analysis | `dmh` |
+| List biggest functions | `afl~[2] | sort -rn | head` |
 
 ## r2 Self-Documentation
 
-r2 is fully self-documenting. When uncertain about any command:
+r2 is fully self-documenting. Append `?` to any command prefix:
 
 ```
 ?              # Top-level help (all command families)
-a?             # Help for analysis commands
-p?             # Help for print commands
-pd?            # Help for print disassembly subcommands
-af?            # Help for analyze function commands
-e??anal.       # List all analysis configuration variables
-e??r2ghidra.   # List all r2ghidra configuration variables
+a?             # Analysis commands
+p?             # Print commands
+pd?            # Print disassembly subcommands
+af?            # Analyze function commands
+e??anal.       # All analysis config variables
+e??r2ghidra.   # r2ghidra config variables
+decai -h       # decai help
+r2ai -h        # r2ai help
 ```
 
-Append `?` to any command prefix to explore its subcommands.
+## Safety Protocols
 
-## Safety Notes
-
-- **Always work on copies** — never reverse engineer original files directly
-- **Use VMs** for unknown/malicious binaries — they may contain malware
-- **Snapshot VMs** before dynamic analysis
-- **Use ESIL emulation** when you cannot safely execute the binary
-- **Respect legal boundaries** — only reverse engineer binaries you have legal rights to analyze
+1. **Sandboxing** — Always run malware in a VM or use ESIL emulation (`ae` commands)
+2. **Backups** — Work on copies (`cp target.bin target.work`)
+3. **Snapshots** — Snapshot VMs before dynamic analysis
+4. **Legal** — Only reverse engineer binaries you have legal authorization to analyze
