@@ -1,13 +1,123 @@
 ---
 name: reverse-engineer
-description: Act as a world-class Reverse Engineer using the full radare2 ecosystem (r2, r2ai, r2frida, r2ghidra) and language-specific tooling. Reverse engineer ANY compiled binary — C, C++, Rust, Go, Dart/Flutter AOT, .NET NativeAOT, Swift, Objective-C, Java/Kotlin (Android), or unknown. Use this skill to analyze binaries, disassemble code, decompile logic, debug processes, instrument applications, recover source-level constructs, and explain low-level concepts. Triggers on requests involving binary analysis, disassembly, decompilation, malware analysis, CTF challenges, AI-assisted RE, or tools like Radare2, Frida, Ghidra, Blutter, GoReSym, ILSpy, or r2ai.
+description: >-
+  Reverse engineer native binaries (ELF, PE, Mach-O) into readable source code using radare2, Ghidra, and companion tools.
+  Use when the user asks to disassemble, decompile, analyze, or reverse engineer a binary, executable, shared library,
+  firmware image, or object file. Also use when asked to find vulnerabilities in binaries, solve crackmes/CTFs, extract
+  strings or symbols, understand unknown executables, reconstruct C source from machine code, or perform binary diffing.
+  Triggers on mentions of radare2, r2, Ghidra, disassembly, decompilation, binary analysis, reverse engineering, RE,
+  or malware analysis.
+  ALSO trigger when the user provides or references ANY binary file (.exe, .dll, .so, .dylib, .o, .elf, .apk, .ipa,
+  .wasm, .bin, .fw, .img, .dex, .class, .jar, .macho, .ko, .sys, .drv, .ocx, .cpl) and asks questions like:
+  "what does this do", "how does this work", "decompile this", "analyze this", "is this safe", "what functions does
+  this have", "extract strings", "find the password", "crack this", "patch this", "bypass this check", "what API calls
+  does it make", "what does this function do", "show me the source code", "convert to C", "convert to source",
+  "understand this binary", "inspect this", "what is this file", "explain this executable", "how does this app work",
+  "what's inside this", "find vulnerabilities", "security audit this binary", "what malware does this contain",
+  "trace this program", "hook this function", "intercept calls", "debug this", "step through this".
+  Supports ALL compiled languages: C, C++, Rust, Go, Dart/Flutter AOT, .NET NativeAOT, Swift, Objective-C,
+  Java/Kotlin (Android), or unknown.
 ---
 
 # Expert Reverse Engineering Pipeline
 
 Reverse engineer **any** compiled binary into readable, reconstructed source. Supports all compiled languages and architectures.
 
-Execute tasks using a rigorous **Triage → Identify Language → Map → Lift → Reconstruct → Verify → Instrument** pipeline.
+## Quick Start — What Does the User Want?
+
+**Read this first.** Match the user's intent to the right workflow, then execute it. Most users won't use RE terminology — interpret their intent.
+
+### "Decompile this" / "Show me the source" / "Convert to C"
+→ Full decompilation pipeline:
+```bash
+# 1. Triage: what is it?
+rabin2 -I <binary>
+# 2. Detect source language (see Language Fingerprinting in Phase 1)
+rabin2 -zz <binary> | grep -iE "go\.build|runtime\.|_ZN|core::|_kDart|System\.|objc_msg|swift_" | head -10
+# 3. Analyze
+r2 -AA <binary>
+# 4. Decompile (use pdg for quality, pdc for speed)
+pdg @ main
+# 5. For full binary: script all functions (Phase 3)
+```
+
+### "What does this binary do?" / "How does this work?" / "Explain this"
+→ Behavioral triage — fast overview without full decompilation:
+```bash
+rabin2 -I <binary>                    # Identity: format, arch, security
+rabin2 -z <binary>                    # Strings: secrets, URLs, messages
+rabin2 -i <binary>                    # Imports: what APIs does it call?
+rabin2 -E <binary>                    # Exports: what does it expose?
+r2 -qc 'aaa; pds @ main' <binary>    # Summary: calls + strings in main
+r2 -qc 'aaa; afl' <binary>           # Function list: scope of code
+```
+Then explain findings in plain language. Use `r2ai -d "Explain current function"` for AI-assisted explanation of key functions.
+
+### "Is this safe?" / "Find vulnerabilities" / "Malware analysis"
+→ Security-focused triage:
+```bash
+rabin2 -I <binary>                    # Security: NX? PIE? Canary? RELRO?
+rabin2 -i <binary> | grep -iE "system|exec|popen|ptrace|connect|socket|recv|send|crypt|chmod|unlink|fork"
+rabin2 -z <binary> | grep -iE "http|password|key|secret|token|admin|root|shell|/bin/"
+r2 -qc 'aaa; axt @ sym.imp.system; axt @ sym.imp.execve' <binary>
+```
+Use `decai -a "Find buffer overflows and propose a patch"` for AI-powered vulnerability scanning. Always run untrusted binaries in a VM or use ESIL emulation.
+
+### "Find the password" / "Solve this crackme" / "Bypass this check"
+→ CTF/crackme workflow:
+```bash
+r2 -AA <binary>
+pdf @ main                            # Read main logic
+# Look for: cmp/test before conditional jumps, string comparisons
+# Find comparison targets:
+axt @ str.correct                     # Who references "correct"?
+axt @ str.wrong                       # Who references "wrong"?
+# AI assist:
+decai -a "solve this crackme"
+# Patch approach: change conditional jump
+wao jmp @ <cmp_addr>                  # Force success branch
+```
+
+### "Extract strings / symbols / imports"
+→ Static metadata extraction:
+```bash
+rabin2 -z <binary>                    # Data section strings
+rabin2 -zz <binary>                   # ALL strings (wide, encoded)
+rabin2 -i <binary>                    # Imports
+rabin2 -E <binary>                    # Exports
+rabin2 -S <binary>                    # Sections
+rabin2 -l <binary>                    # Linked libraries
+rabin2 -c <binary>                    # Classes (C++/ObjC/Java)
+```
+
+### "What does function X do?" / "Explain this function"
+→ Targeted function analysis:
+```bash
+r2 -AA <binary>
+afl~<name>                            # Find the function
+s <function>                          # Seek to it
+pdf                                   # Disassemble
+pdg                                   # Decompile to C
+r2ai -d "Explain what this function does, its parameters, return value, and side effects"
+```
+
+### "Trace / Hook / Intercept calls at runtime"
+→ Dynamic instrumentation with r2frida:
+```bash
+r2 frida://<pid>                      # Attach to running process
+\dt <symbol>                          # Trace function calls
+\di0 <addr>                           # Intercept and log args
+\. script.js                          # Inject custom Frida script
+```
+
+### "I have a .apk / Flutter app / .NET exe / Go binary"
+→ Language-specific pipeline — jump directly to **Phase 5: Language-Specific RE** for the matching language, then proceed with Phases 3-4 for decompilation and reconstruction.
+
+---
+
+# Detailed Pipeline Reference
+
+The Quick Start above handles most requests. Below is the full reference pipeline: **Triage → Identify Language → Map → Lift → Reconstruct → Verify → Instrument**.
 
 ## 0. Environment Setup & Tool Stack
 
