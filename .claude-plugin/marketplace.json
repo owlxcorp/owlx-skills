@@ -1,0 +1,20 @@
+{
+  "name": "copilot-skills",
+  "owner": {
+    "name": "OwlX"
+  },
+  "metadata": {
+    "description": "Specialized agent skills for reverse engineering, binary analysis, and more",
+    "version": "1.0.0"
+  },
+  "plugins": [
+    {
+      "name": "reverse-engineer",
+      "description": "Reverse engineer native binaries (ELF, PE, Mach-O) into readable C using radare2, Ghidra, and companion tools. Covers triage, disassembly, decompilation, and C source reconstruction.",
+      "source": "./",
+      "skills": [
+        "./skills/reverse-engineer"
+      ]
+    }
+  ]
+}
