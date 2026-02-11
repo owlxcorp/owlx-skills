@@ -136,39 +136,128 @@ e scr.color = 3              # Truecolor mode
 
 ### Core Tool Stack
 
-| Tool | Purpose | Install |
-|------|---------|---------|
-| `r2` | Interactive disassembly, analysis, debugging | `brew install radare2` / `apt install radare2` |
-| `rabin2` | Static binary metadata (headers, imports, strings, sections) | Bundled with r2 |
-| `rasm2` | Assemble/disassemble individual instructions | Bundled with r2 |
-| `radiff2` | Binary diffing | Bundled with r2 |
-| `rahash2` | Hashing and checksums | Bundled with r2 |
-| `r2ghidra` | Ghidra decompiler as r2 plugin | `r2pm -ci r2ghidra` |
-| `r2dec` | Lightweight r2 decompiler | `r2pm -ci r2dec` |
-| `r2ai` | AI integration (native C plugin) | `r2pm -Uci r2ai` |
-| `decai` | AI-assisted decompilation (r2js) | `r2pm -Uci decai` |
-| `r2frida` | Frida dynamic instrumentation bridge | `r2pm -ci r2frida` |
-| `retdec` | RetDec decompiler plugin | `r2pm -ci retdec` |
+#### radare2 (r2) — Foundation
+Includes `r2`, `rabin2`, `rasm2`, `radiff2`, `rahash2`, `rafind2`.
+
+| Platform | Install |
+|----------|---------|
+| macOS | `brew install radare2` |
+| Ubuntu/Debian | `sudo apt install radare2` |
+| Fedora/RHEL | `sudo dnf install radare2` |
+| Arch | `sudo pacman -S radare2` |
+| Windows | `choco install radare2` or download from https://github.com/radareorg/radare2/releases |
+| From source (any) | `git clone https://github.com/radareorg/radare2 && cd radare2 && sys/install.sh` |
+
+#### r2 Plugins (all platforms, via r2pm)
+```bash
+r2pm -ci r2ghidra        # Ghidra decompiler (pdg) — recommended
+r2pm -ci r2dec            # Lightweight decompiler (pdd)
+r2pm -Uci r2ai            # AI integration (native C)
+r2pm -Uci decai           # AI decompilation engine (r2js)
+r2pm -ci r2frida          # Frida instrumentation bridge
+r2pm -ci retdec           # RetDec decompiler
+```
+
+#### Ghidra (standalone decompiler + plugin host)
+
+| Platform | Install |
+|----------|---------|
+| macOS | `brew install --cask ghidra` |
+| Ubuntu/Debian | Download from https://github.com/NationalSecurityAgency/ghidra/releases |
+| Windows | Download from https://github.com/NationalSecurityAgency/ghidra/releases |
+| Any (requires JDK 17+) | Extract zip, run `./ghidraRun` (Linux/macOS) or `ghidraRun.bat` (Windows) |
 
 ### Language-Specific Tools
 
-| Tool | Language | Purpose | Install |
-|------|----------|---------|---------|
-| `rustfilt` | Rust | Demangle Rust symbols | `cargo install rustfilt` |
-| `GoReSym` | Go | Recover symbols/types from Go binaries | `go install github.com/mandiant/GoReSym@latest` |
-| `redress` | Go | Reconstruct Go source structure | `go install github.com/goretk/redress@latest` |
-| `blutter` | Dart/Flutter | Extract Dart AOT snapshot symbols/objects | `git clone https://github.com/worawit/blutter` |
-| `darter` / `doldrums` | Dart/Flutter | Parse specific Dart snapshot versions | GitHub repos |
-| `reFlutter` | Dart/Flutter | Patch and analyze Flutter snapshots | `pip install reflutter` |
-| `ghidra-nativeaot` | .NET NativeAOT | Recover .NET AOT metadata in Ghidra | Ghidra plugin |
-| `ILSpy` | .NET (IL) | Decompile standard .NET assemblies to C# | `dotnet tool install ilspy` |
-| `dnSpy` / `dotPeek` | .NET (IL) | Decompile/debug .NET IL assemblies | Standalone |
-| `swift-demangle` | Swift | Demangle Swift symbols | Bundled with Xcode |
-| `class-dump` | Objective-C | Extract ObjC class info from Mach-O | `brew install class-dump` |
-| `jadx` | Java/Android | Decompile APK/DEX to Java | `brew install jadx` |
-| `apktool` | Android | Decode APK resources and smali | `brew install apktool` |
+#### Rust: `rustfilt` (symbol demangler)
 
-Verify: `r2 -v && rabin2 -v`
+| Platform | Install |
+|----------|---------|
+| Any (requires Rust) | `cargo install rustfilt` |
+| Without Rust | `r2` built-in demangling: `e bin.demangle = true` handles Rust symbols |
+
+#### Go: `GoReSym` (symbol recovery) + `redress` (source reconstruction)
+
+| Platform | Install |
+|----------|---------|
+| Any (requires Go 1.18+) | `go install github.com/mandiant/GoReSym@latest` |
+| Any (requires Go) | `go install github.com/goretk/redress@latest` |
+| Pre-built binaries | https://github.com/mandiant/GoReSym/releases |
+
+#### Dart/Flutter: `blutter` + `reFlutter` + `doldrums`
+
+| Tool | Platform | Install |
+|------|----------|---------|
+| blutter | Linux/macOS | `git clone https://github.com/worawit/blutter && cd blutter && pip install -r requirements.txt` |
+| blutter | Windows | Same as above (requires Python 3.8+, CMake, Ninja, C++ compiler) |
+| reFlutter | Any | `pip install reflutter` |
+| doldrums | Any | `git clone https://github.com/nickcano/doldrums` (version-specific) |
+| darter | Any | `git clone https://github.com/nickcano/darter` |
+
+#### .NET: `ILSpy` + `dnSpy` + `ghidra-nativeaot`
+
+| Tool | Platform | Install |
+|------|----------|---------|
+| ILSpy CLI | Any (.NET 8+) | `dotnet tool install -g ilspycmd` |
+| ILSpy GUI | Windows | https://github.com/icsharpcode/ILSpy/releases |
+| ILSpy GUI | macOS/Linux | https://github.com/nicknisi/AvaloniaILSpy/releases or use CLI |
+| dnSpy | Windows | https://github.com/dnSpyEx/dnSpy/releases |
+| dotPeek | Windows | https://www.jetbrains.com/decompiler/download/ |
+| ghidra-nativeaot | Any (Ghidra plugin) | https://github.com/Washi1337/ghidra-nativeaot — copy to `Ghidra/Extensions/` |
+
+#### Swift: `swift-demangle`
+
+| Platform | Install |
+|----------|---------|
+| macOS | Bundled with Xcode (`xcrun swift-demangle`) |
+| Linux | Bundled with Swift toolchain (`sudo apt install swift` or https://swift.org/download/) |
+| Windows | Bundled with Swift toolchain (https://swift.org/download/) |
+| Without Swift | `r2` handles Swift demangling: `e bin.demangle = true` |
+
+#### Objective-C: `class-dump`
+
+| Platform | Install |
+|----------|---------|
+| macOS | `brew install class-dump` |
+| macOS (manual) | https://github.com/nygard/class-dump/releases |
+| Linux/Windows | N/A — ObjC binaries are Mach-O only; use `rabin2 -c` inside r2 instead |
+
+#### Java/Android: `jadx` + `apktool`
+
+| Tool | Platform | Install |
+|------|----------|---------|
+| jadx | macOS | `brew install jadx` |
+| jadx | Ubuntu/Debian | `sudo apt install jadx` or download from https://github.com/skylot/jadx/releases |
+| jadx | Windows | Download from https://github.com/skylot/jadx/releases (zip with .bat launcher) |
+| jadx | Any (requires JRE 11+) | Download release zip, run `bin/jadx` or `bin/jadx-gui` |
+| apktool | macOS | `brew install apktool` |
+| apktool | Ubuntu/Debian | `sudo apt install apktool` |
+| apktool | Windows | Download from https://apktool.org/docs/install — wrapper .bat + jar |
+| apktool | Any | `java -jar apktool.jar d app.apk` |
+
+#### Python: `r2pipe` (scripting API)
+
+| Platform | Install |
+|----------|---------|
+| Any | `pip install r2pipe` |
+
+### Verify Installation
+
+```bash
+# Core
+r2 -v && rabin2 -v
+
+# Plugins (inside r2)
+r2 -qc 'e asm.arch' --
+r2pm -l                              # List installed plugins
+
+# Language tools (check whichever you installed)
+rustfilt --version 2>/dev/null
+GoReSym -h 2>/dev/null
+jadx --version 2>/dev/null
+dotnet tool list -g | grep ilspy
+swift-demangle --help 2>/dev/null || xcrun swift-demangle --help 2>/dev/null
+```
 
 ### r2ai API Key Setup
 
